@@ -53,6 +53,44 @@ Volucer::Worker.connect.run(&Volucer::Rack.handler(MyApp.new))
 call a worker file should make; `Volucer::Worker.create` is the explicit-streams form the
 tests use.
 
+## Rails
+
+Rails' `Application` object is already a Rack app, so there is nothing to adapt:
+
+```ruby
+# worker.rb
+require "volucer"
+require_relative "config/environment"   # Rails' own boot
+
+Volucer::Worker.connect.run(&Volucer::Rack.handler(Rails.application))
+```
+
+```toml
+[backends.rails]
+kind    = "worker"
+command = "ruby worker.rb"
+workers = 4
+
+[server]
+script_extensions = ["rb"]   # else /worker.rb is PATH_INFO, not a routed script
+```
+
+That is the whole integration. **You do not need `Rails.application.executor.wrap`**:
+`ActionDispatch::Executor` is in `Rails::Application`'s default middleware stack, so
+`Rails.application.call(env)` is already wrapped and ActiveRecord connections return to the
+pool after each request. In development `Rails.application.reloader` is likewise already in
+the stack, so code reload keeps working.
+
+Verified against Rails 8.1.4 and a real `volucer` binary: routing, `request.original_url`,
+`request.host`, sessions in both directions, Active Record across consecutive requests, the
+pool's checked-out count returning to zero, and a 404 staying a 404.
+
+## Sinatra and other Rack apps
+
+Identical, with your app in place of `Rails.application`. A bare Rack app that holds a
+connection pool should wrap `call` itself with its own executor — that is the one case where
+the wrapping is yours rather than the framework's.
+
 Point a backend at it:
 
 ```toml
@@ -176,7 +214,11 @@ same green.
   complete before it starts. A protocol property, not a missing feature here.
 - **Per-request state reset for your framework.** The Rack environment is rebuilt by the gem,
   so that much is reset; a framework that keeps module-level state or a cached connection has
-  to deal with it itself. Rails in particular needs `Rails.application.executor.wrap` around
-  every dispatch, which is the adapter's job rather than this gem's — the check that matters
-  is two consecutive requests that must not see each other's state, and
-  `test/test_end_to_end.rb` asserts exactly that for the gem's own surface.
+  to deal with it itself. **Rails does not need anything extra**: `ActionDispatch::Executor` is
+  in `Rails::Application`'s default middleware stack, so `Rails.application.call(env)` is
+  already wrapped and ActiveRecord connections go back to the pool on their own — verified by
+  driving two requests through a real `volucer` binary and seeing the pool's checked-out count
+  return to zero. `Rails.application.executor.wrap` is the answer for a **bare Rack app** that
+  shares a connection pool, or for a caller driving the app outside Rack, not for this gem's
+  Rails path. The check that matters is two consecutive requests that must not see each other's
+  state, and `test/test_end_to_end.rb` asserts exactly that for the gem's own surface.
