@@ -39,6 +39,19 @@ module EndToEnd
     nil
   end
 
+  #: Resolve the binary, or report why there is none.
+  #
+  # Mirrors `GuardTest` in the Python SDK: the skip decision is a named, testable method
+  # because it was written backwards there. `binary` on its own silently falls back to the
+  # sibling checkout, so a guard tested only through it cannot distinguish "found a binary"
+  # from "found one where a developer happens to have a checkout".
+  def self.binary_or_report(has_binary:, required:) # rubocop:disable Naming/UncommunicativeMethodParamName
+    return :run if has_binary
+    return :fail if required
+
+    :skip
+  end
+
   def self.required?
     ENV['VOLUCER_E2E'] == '1'
   end
@@ -53,7 +66,12 @@ end
 
 class EndToEndTest < Minitest::Test
   def setup
-    skip 'no volucer binary: set VOLUCER_BIN or build the server checkout' unless EndToEnd.binary
+    case EndToEnd.binary_or_report(has_binary: !EndToEnd.binary.nil?, required: EndToEnd.required?)
+    when :fail
+      flunk 'VOLUCER_E2E=1 but no volucer binary was found; set VOLUCER_BIN'
+    when :skip
+      skip 'no volucer binary: set VOLUCER_BIN or build the server checkout'
+    end
 
     @root = Dir.mktmpdir('volucer-ruby-e2e-')
     # The entry point has to be routable, so the server's own `script_extensions` has to
@@ -164,5 +182,34 @@ class EndToEndTest < Minitest::Test
     assert_equal '', JSON.parse(second)['query'],
                  "the second request must not inherit the first one's query string"
     assert_equal '/second', JSON.parse(second)['path']
+  end
+end
+
+# The skip decision, which the Python SDK shipped inverted.
+#
+# There, `volucer_binary() or not e2e_required()` skipped when `VOLUCER_E2E=1` was set and no
+# binary existed -- so the one CI job whose purpose is proving the protocol against the real
+# server proved nothing, and reported green. This SDK's `setup` had the same shape: it skipped
+# on a missing binary and never consulted `required?`. These cases pin the rule rather than the
+# expression: run when there is a binary, fail when a skip is not permitted, skip otherwise.
+class GuardTest < Minitest::Test
+  def test_runs_whenever_it_could_do_something
+    assert_equal :run, EndToEnd.binary_or_report(has_binary: true, required: false)
+    assert_equal :run, EndToEnd.binary_or_report(has_binary: true, required: true)
+    assert_equal :fail, EndToEnd.binary_or_report(has_binary: false, required: true),
+                 'a missing binary with VOLUCER_E2E=1 must fail, never skip'
+  end
+
+  def test_skips_only_when_there_is_nothing_to_do
+    assert_equal :skip, EndToEnd.binary_or_report(has_binary: false, required: false)
+  end
+
+  def test_required_reads_the_variable_ci_sets
+    ENV['VOLUCER_E2E'] = '1'
+    assert EndToEnd.required?
+    ENV['VOLUCER_E2E'] = '0'
+    refute EndToEnd.required?, 'only 1 counts; 0 is not a requirement'
+    ENV.delete('VOLUCER_E2E')
+    refute EndToEnd.required?, 'unset is not a requirement'
   end
 end

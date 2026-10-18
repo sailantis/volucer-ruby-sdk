@@ -32,6 +32,12 @@ jobs:
           repository: sailantis/volucer
           path: volucer
 
+      # NASM and CMake are what the server's `aws-lc-sys` backend needs to assemble crypto code.
+      # This workflow never installed them, so the build step below could not have succeeded.
+      - name: Install the server's build dependencies
+        if: matrix.ruby == '3.3'
+        run: sudo apt-get update && sudo apt-get install -y nasm cmake build-essential
+
       - name: Build the server
         if: matrix.ruby == '3.3'
         run: cargo build --manifest-path volucer/Cargo.toml
@@ -39,6 +45,10 @@ jobs:
       - name: End-to-end against the real server
         if: matrix.ruby == '3.3'
         run: |
+          test -x "$PWD/volucer/target/debug/volucer" || {
+            echo "the server did not build, so there is nothing for the suite to talk to"
+            exit 1
+          }
           VOLUCER_BIN="$PWD/volucer/target/debug/volucer" \
           VOLUCER_E2E=1 \
           ruby -Ilib -Itest test/test_end_to_end.rb
