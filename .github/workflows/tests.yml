@@ -1,0 +1,44 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ["3.1", "3.3", "head"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+
+      - name: Unit and wire-format tests
+        run: rake test
+
+      # The end-to-end suite drives a real server, and VOLUCER_E2E=1 is what makes it fail
+      # rather than skip — the same convention the server's own suites and the other SDKs use.
+      - name: Check out the server beside the SDK
+        if: matrix.ruby == '3.3'
+        uses: actions/checkout@v4
+        with:
+          repository: sailantis/volucer
+          path: volucer
+
+      - name: Build the server
+        if: matrix.ruby == '3.3'
+        run: cargo build --manifest-path volucer/Cargo.toml
+
+      - name: End-to-end against the real server
+        if: matrix.ruby == '3.3'
+        run: |
+          VOLUCER_BIN="$PWD/volucer/target/debug/volucer" \
+          VOLUCER_E2E=1 \
+          ruby -Ilib -Itest test/test_end_to_end.rb
