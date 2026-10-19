@@ -41,6 +41,28 @@ module Volucer
     # The `unix:` prefix volucer's configuration uses for a path relay.
     UNIX_PREFIX = 'unix:'
 
+    # The relay to listen on: the argument, else the environment, else nil.
+    #
+    # nil rather than an exception, because whether a missing relay is an error depends on the
+    # caller. `serve` turns it into a startup failure naming both places; a test or an embedding
+    # application may want to decide for itself.
+    #
+    # The trimming rule is `Volucer.socket_address`'s, deliberately: an empty value is what a shell
+    # produces from `VOLUCER_RELAY_SOCKET=`, and reporting it as an empty address would send the
+    # operator looking for a typo in a file that never mentions the key.
+    def self.relay(relay = nil)
+      unless relay.nil?
+        relay = relay.strip
+        return relay unless relay.empty?
+      end
+
+      address = ENV.fetch(RELAY_ENV, nil)
+      return nil if address.nil?
+
+      address = address.strip
+      address.empty? ? nil : address
+    end
+
     # How long `accept` waits before the master reaps children and looks again.
     #
     # It costs nothing when traffic is arriving -- `accept` returns the instant a connection
@@ -106,6 +128,11 @@ module Volucer
     # listener, remove the socket file, and wait briefly for the children already serving --
     # the graceful half of what a service manager expects. A timeout on `accept` is what makes
     # the stop flag observable without a self-pipe.
+    # `relay` may be nil, in which case `Volucer::Supervisor.relay` reads `VOLUCER_RELAY_SOCKET`.
+    # That is the form a deployment should use: the server reads the same variable for its
+    # `relay`, so the address is written once instead of in two files that nothing keeps in sync.
+    # A value passed here still wins, so a script that names its own socket keeps meaning what it
+    # says.
     def self.serve(relay, handler, children: nil)
       unless Process.respond_to?(:fork)
         raise NotImplementedError,
@@ -117,14 +144,24 @@ module Volucer
         raise ArgumentError, "children must be nil (no cap) or at least 1, got #{children}"
       end
 
+      # Resolved before the fork, so a missing address is one startup error rather than one per
+      # child -- and so `listen` is never handed nil.
+      address = self.relay(relay)
+      if address.nil?
+        raise ArgumentError,
+              'no relay to listen on: pass one to Volucer::Supervisor.serve, or set ' \
+              "#{RELAY_ENV} -- the same variable the server reads for its `relay`, " \
+              'e.g. "unix:/run/app/workers.sock"'
+      end
+
       limit = children
 
-      listener = listen(relay)
+      listener = listen(address)
 
       stopping = false
       install_signals { stopping = true }
 
-      announce(relay, limit)
+      announce(address, limit)
 
       live = {}
       begin
@@ -159,7 +196,7 @@ module Volucer
         end
       ensure
         listener.close
-        path = relay_path(relay)
+        path = relay_path(address)
         if path
           begin
             File.unlink(path)

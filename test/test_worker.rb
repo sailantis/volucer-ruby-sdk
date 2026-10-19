@@ -408,3 +408,44 @@ class TransportTest < Minitest::Test
     ENV.delete(Volucer::SOCKET_ENV)
   end
 end
+
+class RelayResolutionTest < Minitest::Test
+  # Where the supervisor's relay address comes from. No fork and no socket, so this runs on every
+  # platform -- which matters, because the rule it covers is the one a deployment relies on.
+  def setup
+    @previous = ENV.fetch(Volucer::RELAY_ENV, nil)
+    ENV.delete(Volucer::RELAY_ENV)
+  end
+
+  def teardown
+    if @previous.nil?
+      ENV.delete(Volucer::RELAY_ENV)
+    else
+      ENV[Volucer::RELAY_ENV] = @previous
+    end
+  end
+
+  def test_the_argument_wins_over_the_environment
+    ENV[Volucer::RELAY_ENV] = 'unix:/from-env.sock'
+    assert_equal 'unix:/from-arg.sock', Volucer::Supervisor.relay('unix:/from-arg.sock')
+  end
+
+  def test_the_environment_is_the_fallback
+    ENV[Volucer::RELAY_ENV] = '  unix:/from-env.sock  '
+    assert_equal 'unix:/from-env.sock', Volucer::Supervisor.relay(nil)
+    assert_equal 'unix:/from-env.sock', Volucer::Supervisor.relay('   '),
+                 'a blank argument is absent, not an address'
+  end
+
+  def test_neither_place_set_is_nil
+    assert_nil Volucer::Supervisor.relay(nil)
+  end
+
+  def test_an_empty_value_means_unset
+    # `Environment=VOLUCER_RELAY_SOCKET=` in a unit file and a shell's
+    # `export VOLUCER_RELAY_SOCKET=` both produce this, and reporting it as an empty address would
+    # send the operator looking for a typo in a file that never mentions it.
+    ENV[Volucer::RELAY_ENV] = '   '
+    assert_nil Volucer::Supervisor.relay(nil)
+  end
+end
