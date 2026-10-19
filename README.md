@@ -50,8 +50,86 @@ Volucer::Worker.connect.run(&Volucer::Rack.handler(MyApp.new))
 ```
 
 `Volucer::Worker.connect` honours `VOLUCER_WORKER_SOCKET` and falls back to stdio. It is the
-call a worker file should make; `Volucer::Worker.create` is the explicit-streams form the
-tests use.
+call a worker file should make; `Volucer::Worker.create` is the explicit-streams form, used
+when you are binding streams yourself — including when the connection was opened by somebody
+else, which is what the `attach` backend needs.
+
+## Attaching instead of spawning
+
+The `worker` backend starts your process. The `attach` backend does not: it *dials* a relay
+that a supervisor in your own process listens on, and holds one connection per slot. That is
+the shape that lets a supervisor fork its workers after booting the application once, so every
+child inherits the interpreter, the loaded classes and Rails' initialisation instead of paying
+for them again.
+
+The split matters: **volucer cannot own the fork.** It has to happen in the application's
+process, because the side that owns the listening socket has to be the side that owns the fork
+— and because `fork` in a process that already has threads is not something a library can
+decide safely. So the fork lives in `Volucer::Supervisor`, and you call it:
+
+```ruby
+# supervisor.rb — boot once, then fork
+require "volucer"
+require_relative "config/environment"     # Rails' own boot
+
+# Boot before the fork: whatever this closes over is inherited by every child.
+handler = Volucer::Rack.handler(Rails.application)
+
+Volucer::Supervisor.serve("unix:/run/app/workers.sock", handler)
+```
+
+```toml
+[backends.rails]
+kind    = "attach"
+relay   = "unix:/run/app/workers.sock"
+workers = 16
+```
+
+`children` caps how many workers may run at once, and omitting it means **no cap**, which is
+what an `attach` deployment wants: volucer dials `workers` times at startup and holds one
+connection per slot, so the live children are already bounded by that number. A cap **below**
+`workers` is not a queue — the surplus dials sit unaccepted in the listen backlog while the pool
+waits for a handshake no child is there to send.
+
+Each child serves exactly one connection and exits. That is what makes recycling cheap — when
+`max_requests` is reached volucer closes the slot, the child sees end-of-file, exits, and the
+supervisor forks a replacement for the next connection. The supervisor reaps its children, so
+a long-lived one does not fill the process table with zombies.
+
+**Unix only.** `Process.fork` does not exist on Windows, and `serve` raises there rather than
+silently running a single process. Use `kind = "worker"` or `kind = "upstream"` on Windows.
+
+**Boot before the fork, connect after it.** The application and its loaded classes are
+inherited by every child, which is the saving. An *open connection* must not be: every child
+would inherit the socket and they would take turns reading from it. Rails is safe here because
+ActiveRecord checks connections out lazily, per request, and `ActionDispatch::Executor` returns
+them to the pool afterwards — which is why `Volucer::Rack.handler` is the right wrapper for a
+Rails app and a bare `proc` is not.
+
+### Writing a supervisor yourself
+
+`Volucer::Supervisor.serve` is a convenience, not the contract. What `attach` needs from any
+supervisor is that it serves a connection **it** opened, which is `Worker.create`:
+
+```ruby
+require "socket"
+
+listener = TCPServer.new("127.0.0.1", 9700)
+
+loop do
+  connection = listener.accept
+  child = fork do
+    listener.close
+    Volucer::Worker.create(connection, connection).run(&handler)
+    exit!(0)
+  end
+  connection.close    # the master must drop its copy
+end
+```
+
+No wrapper is needed here, unlike Python: a `TCPSocket` already responds to `read` and `write`,
+which is what the worker calls on its streams. `exit!` rather than `exit` skips the master's
+`at_exit` handlers and buffer flushing, which every child would otherwise run again.
 
 ## Rails
 
@@ -222,3 +300,6 @@ same green.
   shares a connection pool, or for a caller driving the app outside Rack, not for this gem's
   Rails path. The check that matters is two consecutive requests that must not see each other's
   state, and `test/test_end_to_end.rb` asserts exactly that for the gem's own surface.
+- **Forking on Windows.** `Volucer::Supervisor.serve` needs `Process.fork`. The platform without
+  it is served by `kind = "worker"` or `kind = "upstream"`, and the end-to-end suite proves the
+  `attach` contract on Windows with a threaded supervisor instead.

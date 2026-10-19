@@ -25,6 +25,7 @@ require_relative 'volucer/message'
 require_relative 'volucer/grpc'
 require_relative 'volucer/worker'
 require_relative 'volucer/rack'
+require_relative 'volucer/supervisor'
 
 module Volucer
   VERSION = '0.1.0'
