@@ -407,6 +407,33 @@ class TransportTest < Minitest::Test
   ensure
     ENV.delete(Volucer::SOCKET_ENV)
   end
+
+  # The whole of the transport decision on the worker side.
+  #
+  # `connect` branches on `Volucer.unix_path` and nothing else, so the interesting cases are
+  # about the string -- a prefix absent, present, or present with nothing after it -- and they
+  # need no socket for the same reason `socket_address` does not.
+  #
+  # `"unix:"` with no path returns `""` rather than nil on purpose: nil means "use stdio", and
+  # a server that sent `unix:` sent a broken address, not an instruction to fall back. The
+  # connection then fails and says so on stderr, which on the socket transport is the only
+  # channel a worker has.
+  def test_a_unix_address_is_a_path_and_a_tcp_address_is_not
+    cases = {
+      'unix:/run/volucer/worker.0.sock' => '/run/volucer/worker.0.sock',
+      '127.0.0.1:18400' => nil,
+      'localhost:9000' => nil,
+      'unix:' => ''
+    }
+    cases.each do |given, want|
+      got = Volucer.unix_path(given)
+      if want.nil?
+        assert_nil got, "unix_path(#{given.inspect})"
+      else
+        assert_equal want, got, "unix_path(#{given.inspect})"
+      end
+    end
+  end
 end
 
 class RelayResolutionTest < Minitest::Test

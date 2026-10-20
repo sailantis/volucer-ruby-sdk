@@ -35,6 +35,13 @@ module Volucer
   # space and connecting to it would be a confusing failure rather than the obvious one.
   SOCKET_ENV = 'VOLUCER_WORKER_SOCKET'
 
+  # The prefix volucer's configuration uses for a unix socket address.
+  #
+  # The same string `Volucer::Supervisor::UNIX_PREFIX` holds, and deliberately a separate
+  # constant: one side dials and the other listens, and either moving without the other is
+  # a bug worth being able to see.
+  UNIX_PREFIX = 'unix:'
+
   # The environment variable naming the relay an `attach` backend dials.
   #
   # The counterpart of `SOCKET_ENV`, and for the same purpose: one address both halves of a
@@ -57,6 +64,18 @@ module Volucer
 
     address = address.strip
     address.empty? ? nil : address
+  end
+
+  # The filesystem path of a `unix:` address, or nil for a TCP one.
+  #
+  # The same convention volucer's configuration uses for `external.socket`, `attach.relay`
+  # and a worker's `socket` key, so this reads the rule rather than inventing a fourth
+  # spelling. A loopback TCP address is `host:port` and has no prefix, which is why the
+  # absence of one is the whole test.
+  def self.unix_path(address)
+    return nil unless address.start_with?(UNIX_PREFIX)
+
+    address[UNIX_PREFIX.length..]
   end
 
   # Identify this worker to the server: the SDK and the build it is running.
@@ -102,9 +121,15 @@ module Volucer
       address = Volucer.socket_address
       return create if address.nil?
 
-      host, _, port = address.rpartition(':')
       begin
-        socket = Socket.tcp(host.empty? ? '127.0.0.1' : host, Integer(port), connect_timeout: 10)
+        path = Volucer.unix_path(address)
+        socket =
+          if path
+            UNIXSocket.new(path)
+          else
+            host, _, port = address.rpartition(':')
+            Socket.tcp(host.empty? ? '127.0.0.1' : host, Integer(port), connect_timeout: 10)
+          end
       rescue StandardError => e
         # The address is the server's, so a failure here is a deployment problem and it has
         # to be legible on stderr — which, on the socket transport, is the only channel the
