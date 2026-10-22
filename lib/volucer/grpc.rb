@@ -6,7 +6,7 @@
 # exists to prevent. Its **outcome travels in the trailer section** — after the body, not in
 # the status line — because a streaming reply has to be able to send headers before its
 # outcome exists. So a handler says what happened by naming a status here, and the server
-# moves it to where a client reads it (`docs/plugins.md` §6.6 in `sailantis/volucer`).
+# moves it to where a client reads it.
 #
 # `payload` is the **body**: the raw, length-delimited framed bytes the client receives. The
 # server never parses or re-frames it, so a handler owns the framing entirely. This SDK does
