@@ -1,0 +1,34 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: Publish to RubyGems
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+      url: https://rubygems.org/gems/volucer-worker
+    permissions:
+      # Mandatory for RubyGems trusted publishing: the job exchanges the runner's OIDC
+      # identity for a short-lived push token. There is no API key in this repository.
+      id-token: write
+      # The release action pushes the tag it builds from, so it needs to write refs.
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+          ruby-version: ruby
+
+      - name: Release
+        uses: rubygems/release-gem@v1
