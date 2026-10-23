@@ -31,7 +31,13 @@ framing on the hot path.
 ## Install
 
 ```console
-gem 'volucer-worker', git: 'https://github.com/sailantis/volucer-ruby-sdk'
+gem install volucer-worker
+```
+
+Or, in a Gemfile:
+
+```ruby
+gem 'volucer-worker'
 ```
 
 No runtime dependencies beyond the standard library, deliberately: a worker SDK is loaded
