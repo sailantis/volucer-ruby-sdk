@@ -104,8 +104,8 @@ class EndToEndTest < Minitest::Test
     raise 'the interpreter path contains a single quote' if command.include?("'")
 
     File.write(config, <<~TOML)
-      default_backend = "rb"
       [server]
+      default_backend = "rb"
       http = "127.0.0.1:#{@port}"
       document_root = "#{@root.tr('\\', '/')}"
       front_controller = "app.rb"
@@ -291,8 +291,8 @@ class AttachEndToEndTest < Minitest::Test
 
     config = File.join(@root, 'volucer.toml')
     File.write(config, <<~TOML)
-      default_backend = "rb"
       [server]
+      default_backend = "rb"
       http = "127.0.0.1:#{@port}"
       document_root = "#{@root.tr('\\', '/')}"
       front_controller = "app.rb"
@@ -452,8 +452,8 @@ class SupervisorEndToEndTest < Minitest::Test
 
     config = File.join(@root, 'volucer.toml')
     File.write(config, <<~TOML)
-      default_backend = "rb"
       [server]
+      default_backend = "rb"
       http = "127.0.0.1:#{@port}"
       document_root = "#{@root.tr('\\', '/')}"
       front_controller = "app.rb"
