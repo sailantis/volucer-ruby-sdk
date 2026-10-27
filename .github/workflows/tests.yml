@@ -23,10 +23,25 @@ jobs:
       - name: Unit and wire-format tests
         run: rake test
 
+  # The end-to-end suite drives a real server, so it is its own job: a build failure is then
+  # reported as itself, and it cannot be gated off by editing the matrix above. It used to be
+  # four steps inside `test` guarded by `if: matrix.ruby == '3.3'`; when that pinned version
+  # leaves the matrix the condition stops matching, every job skips those steps, and the
+  # workflow stays green while proving nothing -- which is exactly what happened to the Python
+  # SDK's copy of this shape. A version pinned in a job that has no matrix cannot drift.
+  e2e:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
       # The end-to-end suite drives a real server, and VOLUCER_E2E=1 is what makes it fail
       # rather than skip — the same convention the server's own suites and the other SDKs use.
       - name: Check out the server beside the SDK
-        if: matrix.ruby == '3.3'
         uses: actions/checkout@v4
         with:
           repository: sailantis/volucer
@@ -35,15 +50,12 @@ jobs:
       # NASM and CMake are what the server's `aws-lc-sys` backend needs to assemble crypto code.
       # This workflow never installed them, so the build step below could not have succeeded.
       - name: Install the server's build dependencies
-        if: matrix.ruby == '3.3'
         run: sudo apt-get update && sudo apt-get install -y nasm cmake build-essential
 
       - name: Build the server
-        if: matrix.ruby == '3.3'
         run: cargo build --manifest-path volucer/Cargo.toml
 
       - name: End-to-end against the real server
-        if: matrix.ruby == '3.3'
         run: |
           test -x "$PWD/volucer/target/debug/volucer" || {
             echo "the server did not build, so there is nothing for the suite to talk to"
