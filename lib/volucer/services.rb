@@ -170,8 +170,18 @@ module Volucer
     # A value written by `set` is always JSON. A value written by another application through the
     # same storage -- a PHP worker, say -- need not be, and returning the bytes is the honest answer
     # rather than an exception that would make one storage unusable by two languages.
+    #
+    # **The encoding is checked before parsing, rather than relying on `JSON.parse` to raise.** It
+    # does not, consistently: json 2.x as shipped with Ruby 3.1 and 3.3 returns a String for a
+    # binary argument it cannot decode, where the version local testing had raised `ParserError` --
+    # so a test that passed on one machine failed in CI with a value that was neither the bytes nor
+    # the JSON. Bytes that are not valid UTF-8 cannot be JSON text by definition, which is a fact
+    # about the data rather than about the library.
     def self.decode_value(raw)
-      JSON.parse(raw)
+      text = raw.dup.force_encoding(Encoding::UTF_8)
+      return raw unless text.valid_encoding?
+
+      JSON.parse(text)
     rescue JSON::ParserError
       raw
     end

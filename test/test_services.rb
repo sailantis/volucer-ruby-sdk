@@ -248,9 +248,37 @@ class ServicesTest < Minitest::Test
   def test_a_value_that_is_not_json_comes_back_as_bytes
     # A value written by another language through the same storage need not be JSON, and returning
     # the bytes is the honest answer rather than an exception that makes one storage unusable by two.
-    result, = converse(ok({ 'value' => b64("\x00\xff") })) { |rpc| rpc.kv('cache').get('k') }
+    #
+    # Asserted on the **bytes**, not on the encoding or on `==`: a String compared with `==` matches
+    # whatever encoding the other side has so long as the bytes do, so the assertion that failed in
+    # CI compared equal-looking values whose encodings differed. `unpack1('H*')` is the comparison
+    # that cannot be satisfied by accident.
+    result, = converse(ok({ 'value' => b64("\x00\xFF") })) { |rpc| rpc.kv('cache').get('k') }
 
-    assert_equal "\x00\xff".b, result
+    assert_equal '00ff', result.unpack1('H*')
+    assert_equal Encoding::BINARY, result.encoding,
+                 'bytes are returned as bytes; a UTF-8 tag on them is a lie about what they are'
+  end
+
+  def test_a_value_that_is_not_valid_utf8_never_reaches_the_json_parser
+    # The CI failure this pins: `JSON.parse` does not reliably raise on a binary argument -- json 2.x
+    # on Ruby 3.1 and 3.3 returns a String for one it cannot decode where the locally tested version
+    # raised `ParserError`. So the *encoding* is checked first, which is a fact about the data rather
+    # than a behaviour of whichever json happened to be installed.
+    raw = "\x00\xFF".b
+    text = raw.dup.force_encoding(Encoding::UTF_8)
+    refute text.valid_encoding?
+
+    assert_equal '00ff', Volucer::Kv.decode_value(raw).unpack1('H*')
+    assert_equal Encoding::BINARY, Volucer::Kv.decode_value(raw).encoding
+  end
+
+  def test_a_json_value_is_still_decoded_from_a_binary_string
+    # The other half: a socket gives every payload as `BINARY`, so the valid-UTF-8 path has to accept
+    # one. A client that required the caller to re-tag its own answers would be a client that never
+    # decoded anything a server sent.
+    assert_equal({ 'a' => 1 }, Volucer::Kv.decode_value('{"a":1}'.b))
+    assert_equal 'bye', Volucer::Kv.decode_value('"bye"'.b)
   end
 
   def test_a_server_value_that_is_not_base64_is_a_protocol_error
