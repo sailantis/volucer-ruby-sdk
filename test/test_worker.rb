@@ -476,3 +476,32 @@ class RelayResolutionTest < Minitest::Test
     assert_nil Volucer::Supervisor.relay(nil)
   end
 end
+
+# `Volucer.process_rss_bytes` is what a `memory_limit_mb` pool recycles on, and it fails in a
+# way that no other test can notice: it returns 0 rather than raising, and 0 is the protocol's
+# legal "this runtime does not report it". So a broken implementation is indistinguishable from
+# a platform that cannot measure memory, and it stayed broken through several releases.
+class ProcessRssTest < Minitest::Test
+  def test_a_platform_that_reports_memory_reports_a_plausible_number
+    rss = Volucer.process_rss_bytes
+
+    skip 'this platform does not report RSS' if rss.zero?
+
+    # A Ruby process is never smaller than a megabyte, and a test process is not a terabyte.
+    # The bounds exist to catch a *wrong* number -- a pointer read as a size, or the wrong
+    # field of PROCESS_MEMORY_COUNTERS -- rather than to pin the actual footprint.
+    assert_operator rss, :>, 1024 * 1024, "RSS of #{rss} bytes is implausibly small"
+    assert_operator rss, :<, 1024**4, "RSS of #{rss} bytes is implausibly large"
+  end
+
+  # The two ways this method has actually broken. Neither raised, because the method ends in
+  # `rescue StandardError => 0` -- so the assertion has to be that the *number* is right, and
+  # that means not returning 0 on a platform known to report.
+  def test_windows_and_linux_both_answer_rather_than_degrading_silently
+    platform_reports = Gem.win_platform? || File.exist?('/proc/self/statm')
+    skip 'no known RSS source on this platform' unless platform_reports
+
+    refute_equal 0, Volucer.process_rss_bytes,
+                 'this platform has an RSS source, so 0 means the reader is broken'
+  end
+end

@@ -792,15 +792,30 @@ module Volucer
       # built-in for it, and shelling out per request would cost more than the number is
       # worth. `WorkingSetSize` from the process's own counters is the figure Task Manager
       # shows, which is the one an operator compares against `memory_limit_mb`.
-      require 'fiddle'
+      #
+      # `fiddle` stopped being a default gem in Ruby 4.0. It is still *usually* present as a
+      # bundled gem, so a plain `require 'fiddle'` succeeds outside bundler and raises
+      # `LoadError` under it unless the Gemfile lists it. Rescuing is the right answer rather
+      # than declaring a dependency: RSS reporting is optional, and an honest 0 is the
+      # protocol's "this runtime does not report it". A gem that refuses to load because it
+      # cannot measure memory would be worse than one that reports 0.
+      begin
+        require 'fiddle'
+      rescue LoadError
+        return 0
+      end
 
       kernel32 = Fiddle.dlopen('kernel32')
       get_current_process = Fiddle::Function.new(
         kernel32['GetCurrentProcess'], [], Fiddle::TYPE_VOIDP
       )
+      # `TYPE_UINT32` is not a Fiddle constant; the unsigned fixed-width names carry a `_T`
+      # suffix like their C counterparts. The wrong name raises `NameError` on the *first*
+      # call, which the `rescue StandardError` at the bottom of this method turned into a
+      # silent 0 — so Windows RSS reporting never worked and nothing reported that it did not.
       get_memory_info = Fiddle::Function.new(
         kernel32['K32GetProcessMemoryInfo'],
-        [Fiddle::TYPE_VOIDP, Fiddle::TYPE_VOIDP, Fiddle::TYPE_UINT32],
+        [Fiddle::TYPE_VOIDP, Fiddle::TYPE_VOIDP, Fiddle::TYPE_UINT32_T],
         Fiddle::TYPE_INT
       )
 

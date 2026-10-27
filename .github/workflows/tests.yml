@@ -21,7 +21,12 @@ jobs:
           ruby-version: ${{ matrix.ruby }}
 
       - name: Unit and wire-format tests
-        run: rake test
+        # `bundle exec`, not a bare `rake`: the release workflow runs `bundle exec rake
+        # release`, so anything that only works outside bundler is a release that fails
+        # after the tag is pushed. Two real bugs hid behind that gap -- `rake` itself was
+        # missing from the bundle, and the gemspec required `lib/volucer`, which rewrites
+        # `$stdout` on every `bundle` command.
+        run: bundle exec rake test
 
   # The end-to-end suite drives a real server, so it is its own job: a build failure is then
   # reported as itself, and it cannot be gated off by editing the matrix above. It used to be

@@ -20,6 +20,7 @@
 # buffer and the Python SDK by rebinding `sys.stdout`; this is Ruby's version of the same
 # decision. The real channel is kept in `Volucer::CHANNEL_OUT` and `Volucer::CHANNEL_IN`.
 
+require_relative 'volucer/version'
 require_relative 'volucer/protocol'
 require_relative 'volucer/message'
 require_relative 'volucer/grpc'
@@ -30,8 +31,6 @@ require_relative 'volucer/rack'
 require_relative 'volucer/supervisor'
 
 module Volucer
-  VERSION = '0.1.0'
-
   # The protocol channel, captured before `$stdout` is reassigned.
   CHANNEL_OUT = $stdout
 

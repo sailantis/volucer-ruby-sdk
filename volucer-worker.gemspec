@@ -1,6 +1,9 @@
 # frozen_string_literal: true
 
-require_relative 'lib/volucer'
+# Only the version, deliberately: requiring `lib/volucer` here would rewrite `$stdout` at
+# gemspec-evaluation time, which bundler does on every `bundle` command. See
+# `lib/volucer/version.rb` for what that broke.
+require_relative 'lib/volucer/version'
 
 Gem::Specification.new do |spec|
   spec.name = 'volucer-worker'
