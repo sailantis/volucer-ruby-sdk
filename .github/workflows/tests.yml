@@ -19,13 +19,18 @@ jobs:
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: ${{ matrix.ruby }}
+          # Installs the Gemfile's gems *and* caches them. Without it, `bundle exec` below
+          # has no bundle to exec against: on ruby-head the run failed with "Could not find
+          # gem 'minitest (< 6)' in locally installed gems", because nothing had installed
+          # the Gemfile into the first place. The release workflow already used this.
+          bundler-cache: true
 
       - name: Unit and wire-format tests
         # `bundle exec`, not a bare `rake`: the release workflow runs `bundle exec rake
         # release`, so anything that only works outside bundler is a release that fails
-        # after the tag is pushed. Two real bugs hid behind that gap -- `rake` itself was
-        # missing from the bundle, and the gemspec required `lib/volucer`, which rewrites
-        # `$stdout` on every `bundle` command.
+        # after the tag is pushed. Three real bugs hid behind that gap -- `rake` itself
+        # missing from the bundle, the gemspec requiring `lib/volucer` (which rewrites
+        # `$stdout` on every `bundle` command), and a Gemfile that no Ruby 3.1 could resolve.
         run: bundle exec rake test
 
   # The end-to-end suite drives a real server, so it is its own job: a build failure is then
