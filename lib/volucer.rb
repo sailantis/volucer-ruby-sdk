@@ -23,6 +23,8 @@
 require_relative 'volucer/protocol'
 require_relative 'volucer/message'
 require_relative 'volucer/grpc'
+require_relative 'volucer/rpc'
+require_relative 'volucer/services'
 require_relative 'volucer/worker'
 require_relative 'volucer/rack'
 require_relative 'volucer/supervisor'

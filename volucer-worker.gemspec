@@ -10,8 +10,9 @@ Gem::Specification.new do |spec|
   spec.description = <<~DESC
     The Ruby end of volucer's worker protocol. The specification is
     `docs/worker-protocol.md` in sailantis/volucer; this gem implements it beside the PHP
-    and Python SDKs. Includes a Rack adapter, CALL/RETURN and JOB support, and no runtime
-    dependencies beyond the standard library.
+    and Python SDKs. Includes a Rack adapter, CALL/RETURN and JOB support, an `[rpc]` client
+    for applications that are not workers, and no runtime dependencies beyond the standard
+    library.
   DESC
   spec.homepage = 'https://github.com/sailantis/volucer-ruby-sdk'
   spec.license = 'MIT'

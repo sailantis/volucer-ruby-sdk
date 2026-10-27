@@ -220,6 +220,85 @@ Two configuration keys are not optional for a non-PHP worker:
   worker process**. Puma with threads is what a Ruby deployment normally uses; this channel
   is the opposite trade, and it is deliberate rather than a gap.
 
+## Reaching `kv`, `lock` and `jobs` without being a worker
+
+Everything above needs a worker's channel. A **Rack application served by FastCGI has no such
+channel** — it exists for one request and can only answer the frame it was handed — so volucer
+serves the same namespaces on a socket the application *dials*, `[rpc]`, and this gem provides the
+client:
+
+```toml
+[backends.app]
+kind     = "external"
+socket   = "unix:/run/php/php8.3-fpm.sock"
+services = ["kv.cache", "lock", "jobs"]
+
+[kv.cache]
+driver = "memory"
+
+[rpc]
+listen = "unix:/run/volucer/rpc.sock"
+```
+
+```ruby
+rpc = Volucer::Rpc.connect(env: env)      # `env` is the Rack environment
+
+rpc.kv('cache').set('greeting', 'hello')
+rpc.kv('cache').get('greeting')           # => "hello"
+
+holder = rpc.lock.acquire('pdf:create')   # => an id, or nil for contention
+rpc.lock.release('pdf:create', holder)
+
+rpc.jobs('mail').push('SendEmail', payload: '{"to":"a@b"}')
+```
+
+**Pass `env:` and volucer does the configuring.** It writes `VOLUCER_RPC` and `VOLUCER_RPC_TOKEN`
+into every request the backend serves — as CGI parameters under FastCGI, or as `X-Volucer-Rpc`
+headers for an `upstream` origin, which Rack presents as `HTTP_X_VOLUCER_RPC`. One deployment
+states the address once, in one file, and both sides read it. The process's own `ENV` is *not*
+where those arrive, which is why the `env:` argument exists; a CLI script or a queue consumer
+omits it and gets `ENV`, which is correct there.
+
+Nothing is dialled by `connect` — a request that never touches a store pays for neither a socket
+nor a failed connect — and a backend whose `services` list is empty still gets a plane: the *call*
+fails, with the missing variable named, so a request that never touches a store keeps working and
+the one that does gets an error pointing at the deployment.
+
+### What is different from a worker's channel
+
+| | A worker's channel | `[rpc]` |
+| --- | --- | --- |
+| Handshake | `HELLO`/`HELLO_ACK` once | none — version and checksum policy are settled by the frames |
+| Identity | the connection | a `token` on every `CALL` |
+| Deadline | the protocol guarantees an answer | the client's, default **10 s** |
+| Undecided calls | impossible | `ProtocolError#unknown?` |
+
+The deadline is the one thing to plan for: it has to cover a `lock.acquire` that was asked to
+**wait**, or the call is abandoned mid-wait and the lock's state is unknown. Ask for a longer one —
+`Volucer::Rpc.connect(timeout: 30)` — rather than treating a timeout as contention.
+
+### Bytes, and where they are base64
+
+The server stores opaque bytes, and the JSON codec cannot carry a byte above `0x7f`, so every field
+it treats as bytes is base64 on the wire: a KV key, a KV value, a job payload. A lock's `resource`
+is the exception, because a name is a name. `Kv` and `Jobs` do this encoding for you; it matters
+when you read the wire or write to the same storage from another language.
+
+A KV value is JSON by default, so `set('k', { 'a' => 1 })` returns the Hash it was given. A value
+that is a **binary** `String` is sent as given rather than JSON-wrapped — the opt-out a caller who
+compressed or encrypted it needs. `Kv#serializer(encode, decode)` replaces the pair entirely.
+
+### Two units, and one of them is easy to get wrong
+
+A KV `ttl` is **seconds**; a lock's `ttl` and `wait` are **microseconds**. Copying one into the
+other produces a lock held for a month, or a cache entry that expires before the response is
+written.
+
+```ruby
+rpc.kv('cache').set('session', data, ttl: 3600)          # an hour
+rpc.lock.acquire('pdf:create', ttl: 30_000_000)          # thirty seconds
+```
+
 ## The two Ruby-specific answers
 
 Everything else in this gem is a transliteration of the specification. These two are not.
@@ -269,7 +348,7 @@ method on a class you control — if you want to feed it `jemalloc`'s numbers or
 | --- | --- |
 | `REQUEST` / `RESPONSE` / `BODY` / `END` | `Worker#run { }`; the block returns a `Response`, a `String`, a Rack `[status, headers, body]` array, or `nil` |
 | `JOB` / `ACK` | `Worker#consume { }`; `nil` acknowledges, `false` requeues, a `String` rejects with a reason, and a raise requeues |
-| `CALL` / `RETURN` | `Worker#call(name, params)` from inside a block; `Worker#on_call { }` answers the server's calls |
+| `CALL` / `RETURN` | `Worker#call(name, params)` from inside a block; `Worker#on_call { }` answers the server's calls. Outside a worker, `Volucer::Rpc` does the same over `[rpc]` |
 | `LOG` / `METRIC` | `Worker#emit_log`, `Worker#emit_metric` |
 | `CONTROL` | Answered by the SDK; `drain` and `shutdown` stop the loop |
 | `PING` / `PONG` | Answered by the SDK |
@@ -333,3 +412,7 @@ same green.
 - **Forking on Windows.** `Volucer::Supervisor.serve` needs `Process.fork`. The platform without
   it is served by `kind = "worker"` or `kind = "upstream"`, and the end-to-end suite proves the
   `attach` contract on Windows with a threaded supervisor instead.
+- **A job consumer over `[rpc]`.** `[rpc]` is the *producer* side: `jobs.push`, `jobs.push_batch`,
+  `jobs.size`, `jobs.pipelines`. Reserving a job is what a consumer's own channel is for, because a
+  reserved job's lease starts ticking — so a Rack application enqueues, and a `Volucer::Worker`
+  consumes.

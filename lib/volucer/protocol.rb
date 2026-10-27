@@ -81,9 +81,35 @@ module Volucer
   class ProtocolError < StandardError
     attr_reader :fatal
 
-    def initialize(message, fatal: true)
+    # Whether the failed operation may nevertheless have taken effect.
+    #
+    # The third answer `RETURN` has room for, and the one a retry has to know about: a call
+    # that was **written** and never answered -- a broken connection, an expired deadline --
+    # may have been served, so retrying it may duplicate a side effect. A refusal the server
+    # actually sent is `false`: nothing happened, and retrying is safe.
+    #
+    # Always `false` on a worker's channel, where the protocol guarantees an answer; it is
+    # {Rpc} that can reach the undecided case, because it reads a socket.
+    attr_reader :unknown
+
+    def initialize(message, fatal: true, unknown: false)
       super(message)
       @fatal = fatal
+      @unknown = unknown
+    end
+
+    # Whether the failure may have taken effect anyway, named for the question a caller asks.
+    #
+    # `may_have_taken_effect?` rather than a predicate over `#unknown`, because the sentence a caller
+    # actually needs to answer is "is it safe to retry this?", and `unknown?` reads as "the error is
+    # of an unknown kind" to anyone who has not read this file.
+    def may_have_taken_effect?
+      @unknown
+    end
+
+    # The field's own name, kept because `RETURN` spells it `unknown` on the wire.
+    def unknown?
+      @unknown
     end
   end
 
