@@ -14,14 +14,19 @@ gemspec
 # included in the bundle".
 gem 'rake'
 
-# The release tasks come from `bundler/gem_tasks`, which the Rakefile requires.
-# This is the version that provides them, and the floor is the one that has the
-# `release` task's tag-and-push behaviour the release action depends on.
-gem 'bundler', '>= 2.4'
+# `bundler` is deliberately **not** listed. `bundler/gem_tasks` -- which provides the
+# `release` task -- is supplied by whichever bundler is running, so a Gemfile entry only
+# imposes a floor on every Ruby that evaluates this file. Asking for `>= 2.4` broke
+# Ruby 3.1, whose bundled bundler is 2.3.27: "Your bundle requires a different version of
+# Bundler than the one you're running". That failure was invisible while CI ran a bare
+# `rake test` and only appeared once it ran `bundle exec`.
 
 # The suite's test framework. It is a bundled gem on modern Rubies rather than a default one,
 # so it resolves when the tests are run directly but not under `bundle exec`.
-gem 'minitest'
+#
+# Pinned below 6, which raised its floor to Ruby 3.2: CI still covers 3.1, and an
+# unconstrained `gem 'minitest'` resolves 6.x there and then fails to install.
+gem 'minitest', '< 6'
 
 # Only needed on Windows, where `Volucer.process_rss_bytes` uses `GetProcessMemoryInfo`.
 # It stopped being a default gem in Ruby 4.0, so without this line the RSS path degrades to 0
