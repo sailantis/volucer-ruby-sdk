@@ -322,6 +322,18 @@ Two configuration keys are not optional for a non-PHP worker:
 
 Everything else in this gem is a transliteration of the specification. These two are not.
 
+### The request body may arrive in pieces, and that is a feature
+
+This gem advertises `stream_request_body` in its `HELLO_ACK`, so a server that supports it forwards
+the body frame by frame as the client produces it instead of buffering the whole thing first. The
+handler still sees `request.body` as one `String`, so nothing changes on your side — what changes is
+that a 256 MiB upload costs the *server* a few hundred kilobytes rather than 256 MiB.
+
+The cost is on this side, and it is unavoidable: Rack's `rack.input` is a file-like object, and this
+SDK hands it `StringIO.new(request.body)`, so the application's own copy is still the full body. The
+saving is the server's, which is the process that was previously holding every concurrent upload at
+once.
+
 ### stdout is the channel, so the SDK takes it
 
 The protocol uses the child's stdout as its channel. PHP solves this with an output buffer

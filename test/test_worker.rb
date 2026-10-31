@@ -56,6 +56,35 @@ class Channel
     )
   end
 
+  # A REQUEST whose body has **no declared length**, terminated by `LAST`.
+  #
+  # This is what the server sends to a worker that advertised `stream_request_body`: the size is
+  # unknown when the head goes out, so `body_len` is omitted entirely and `LAST` is the only end
+  # signal.
+  def streamed_request(id, pieces)
+    write(
+      Volucer::Frame.new(
+        Volucer::MessageType::REQUEST, id,
+        Volucer.json_bytes(
+          'method' => 'POST', 'uri' => '/upload', 'protocol' => 'HTTP/1.1',
+          'headers' => [['Content-Type', 'application/octet-stream']],
+          'remote_addr' => '127.0.0.1',
+          # No `body_len` key at all.
+          'script_filename' => '/srv/app.ru', 'https' => false
+        )
+      ).encode
+    )
+    pieces.each_with_index do |piece, index|
+      write(
+        Volucer::Frame.new(
+          Volucer::MessageType::BODY, id, piece,
+          index == pieces.length - 1 ? Volucer::Flags::LAST : 0
+        ).encode
+      )
+    end
+    self
+  end
+
   def job(id, body: ''.b, attempts: 0)
     write(
       Volucer::Frame.new(
@@ -122,6 +151,17 @@ class HandshakeTest < Minitest::Test
     assert_equal Process.pid, payload['pid']
   end
 
+  def test_the_ack_says_a_streamed_body_can_be_read
+    # The server only sends a REQUEST with no `body_len` to a worker that says so here. An SDK that
+    # predates the field would read an absent length as 0 and take the first BODY frame for its own
+    # response, so the party that has to cope is the one that advertises.
+    channel = Channel.new.hello
+    worker_for(channel).handshake
+
+    ack = channel.of(Volucer::MessageType::HELLO_ACK).first.last
+    assert_equal true, ack['stream_request_body']
+  end
+
   def test_the_handshake_frames_are_always_checksummed
     # Even when both ends are about to stop hashing: the agreement travels in frames, so the
     # frames carrying it must be verified.
@@ -152,6 +192,44 @@ class RequestTest < Minitest::Test
   def run_one(channel)
     worker_for(channel).run { |request, _worker| yield(request) }
     channel.frames
+  end
+
+  def test_a_streamed_body_arrives_whole_and_in_order
+    channel = Channel.new.hello.streamed_request(1, ["first-".b, "second-".b, 'third'.b])
+    seen = nil
+    run_one(channel) { |request| seen = request.body; Volucer::Response.text('ok') }
+    assert_equal 'first-second-third', seen
+  end
+
+  def test_a_streamed_body_whose_terminator_is_empty_is_empty_not_a_hang
+    # The terminator is an empty LAST frame. A reader that waited for a non-empty one would hang
+    # until the pool killed the worker.
+    channel = Channel.new.hello.streamed_request(1, [''.b])
+    seen = nil
+    run_one(channel) { |request| seen = request.body; Volucer::Response.text('ok') }
+    assert_equal '', seen
+  end
+
+  def test_a_declared_length_is_still_authoritative
+    # Streaming did not weaken the old rule: a body that ends before its declared length is a
+    # protocol error, not a short body accepted as complete.
+    channel = Channel.new.hello
+    channel.write(
+      Volucer::Frame.new(
+        Volucer::MessageType::REQUEST, 1,
+        Volucer.json_bytes(
+          'method' => 'POST', 'uri' => '/', 'headers' => [],
+          'remote_addr' => '127.0.0.1', 'body_len' => 10,
+          'script_filename' => '/srv/app.ru', 'https' => false
+        )
+      ).encode
+    )
+    channel.write(
+      Volucer::Frame.new(Volucer::MessageType::BODY, 1, 'abc'.b, Volucer::Flags::LAST).encode
+    )
+    assert_raises(Volucer::ProtocolError) do
+      run_one(channel) { |_request| Volucer::Response.text('x') }
+    end
   end
 
   def test_a_response_is_a_head_then_end

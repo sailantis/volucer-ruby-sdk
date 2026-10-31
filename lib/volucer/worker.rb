@@ -273,7 +273,13 @@ module Volucer
                   'sapi' => '',
                   'pid' => Process.pid,
                   'runtime' => Volucer.runtime,
-                  'no_checksum' => offer
+                  'no_checksum' => offer,
+                  # **This SDK can read a body whose length it was not told.** The server only sends
+                  # a REQUEST without `body_len` to a worker that says so here, because the
+                  # alternative is worse than a missing feature: an SDK that predates the field reads
+                  # an absent length as 0, concludes there is nothing to read, and then takes the
+                  # first BODY frame for its own response.
+                  'stream_request_body' => true
                 })
 
       @checksum = false if offer
@@ -485,7 +491,9 @@ module Volucer
       @keep_alive = true
 
       metadata = Volucer.decode_json(payload, 'a REQUEST header')
-      body = read_body(header.request_id, metadata.fetch('body_len', 0).to_i)
+      # `nil` when the server declared no length: the body is streamed and `LAST` ends it. Keeping
+      # that distinct from an explicit `0` — a correctly empty body — is what makes it readable.
+      body = read_body(header.request_id, metadata['body_len']&.to_i)
 
       request = Request.new(
         method: metadata.fetch('method', 'GET').to_s,
@@ -526,13 +534,21 @@ module Volucer
     # Read the request body from the BODY frames that follow a REQUEST.
     #
     # Stops at `body_len` bytes, because the declared length is authoritative.
+    #
+    # `body_len` is `nil` when the server did not declare one, which is how it says "this body is
+    # streamed and its length is unknown". Then `LAST` is the *only* end signal, so the loop reads
+    # until it sees one rather than counting — and an explicit `0` stays what it always was, a
+    # correctly empty body.
     def read_body(request_id, body_len)
-      return ''.b if body_len.zero?
+      return ''.b if body_len == 0
 
       body = +''
-      while body.bytesize < body_len
+      while body_len.nil? || body.bytesize < body_len
         header = read_header
         if header.nil?
+          raise ProtocolError,
+                'the server closed the pipe in the middle of a streamed request body' if body_len.nil?
+
           raise ProtocolError,
                 "the server closed the pipe after #{body.bytesize} of #{body_len} body bytes"
         end
@@ -551,6 +567,14 @@ module Volucer
         end
 
         body << payload
+
+        if body_len.nil?
+          # Checked after the bytes are kept, so a final frame that also carried the last bytes of
+          # the body is not dropped.
+          break if header.last?
+
+          next
+        end
 
         if header.last? && body.bytesize != body_len
           raise ProtocolError,
