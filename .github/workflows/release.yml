@@ -28,7 +28,23 @@ jobs:
       - uses: ruby/setup-ruby@v1
         with:
           bundler-cache: true
-          ruby-version: ruby
+          # Pinned to 3.x rather than `ruby`, which now resolves to 4.0.
+          #
+          # The release itself works on either: `bundle exec rake release` pushed 0.2.0
+          # from Ruby 4.0.9. What fails there is this action's *verification* step, which
+          # runs `gem exec rubygems-await` to poll for the version to appear in the index.
+          # rubygems-await 0.5.4 -- the newest published -- crashed with
+          # `undefined method 'dependencies' for an instance of Gem::CompactIndexClient::Cache`.
+          #
+          # `Gem::CompactIndexClient` is new in RubyGems 4: it is absent from the 3.5 and 3.6
+          # trees, so that class, and therefore that crash, cannot occur on Ruby 3. The pin
+          # keeps the verification step rather than disabling it with `await-release: false`,
+          # because a red X on a release that actually published is the failure mode that
+          # teaches you to ignore the signal.
+          #
+          # 3.3 is what the tests workflow already proves this Gemfile resolves and passes on.
+          # Revisit when rubygems-await supports RubyGems 4, and drop the pin then.
+          ruby-version: '3.3'
 
       - name: Release
         uses: rubygems/release-gem@v1
