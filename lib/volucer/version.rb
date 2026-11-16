@@ -11,5 +11,5 @@ module Volucer
   # `undefined method 'set_encoding' for an instance of Volucer::GuardedStdout`.
   #
   # Reading one constant is all a gemspec should ever need from its own library.
-  VERSION = '0.1.0'
+  VERSION = '0.2.0'
 end
