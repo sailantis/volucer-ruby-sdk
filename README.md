@@ -259,6 +259,23 @@ No wrapper is needed here, unlike Python: a `TCPSocket` already responds to `rea
 which is what the worker calls on its streams. `exit!` rather than `exit` skips the master's
 `at_exit` handlers and buffer flushing, which every child would otherwise run again.
 
+### Consuming jobs
+
+The attach supervisor above serves HTTP with `Worker#run`; it does not consume jobs. A job
+consumer is a separate process started by Volucer through `[jobs.pool]`. Its entry point uses
+`Volucer::Worker.connect.consume { |job, worker| ... }`, not `Volucer::Supervisor.serve`:
+
+```toml
+[jobs]
+consume = ["emails"]
+
+[jobs.pool]
+command = "ruby consumer.rb"
+workers = 4
+```
+
+See the Volucer [job-pool configuration](https://github.com/sailantis/volucer/blob/main/docs/08-SERVICES.md#configuring-the-server-side).
+
 ## Rails
 
 Rails' `Application` object is already a Rack app, so there is nothing to adapt:
@@ -378,7 +395,7 @@ method on a class you control — if you want to feed it `jemalloc`'s numbers or
 | Frame | Handler surface |
 | --- | --- |
 | `REQUEST` / `RESPONSE` / `BODY` / `END` | `Worker#run { }`; the block returns a `Response`, a `String`, a Rack `[status, headers, body]` array, or `nil` |
-| `JOB` / `ACK` | `Worker#consume { }`; `nil` acknowledges, `false` requeues, a `String` rejects with a reason, and a raise requeues |
+| `JOB` / `ACK` | `Worker#consume { }`; anything except `false` or a `String` acknowledges, `false` requeues, a `String` rejects with a reason, and a raise requeues |
 | `CALL` / `RETURN` | `Worker#call(name, params)` from inside a block; `Worker#on_call { }` answers the server's calls. Outside a worker, `Volucer::Rpc` does the same over `[rpc]` |
 | `LOG` / `METRIC` | `Worker#emit_log`, `Worker#emit_metric` |
 | `CONTROL` | Answered by the SDK; `drain` and `shutdown` stop the loop |

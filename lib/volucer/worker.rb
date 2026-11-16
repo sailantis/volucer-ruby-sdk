@@ -309,7 +309,7 @@ module Volucer
     #
     # What the block returns decides the job's fate:
     #
-    # * `nil` — **acknowledge.** Done.
+    # * Anything except `false` or a String — **acknowledge.** Done.
     # * `false` — **requeue.** Not done, and it should be handed out again.
     # * a String — **reject**, with that string as the reason.
     #
